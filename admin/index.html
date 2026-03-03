@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeacherMada — Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #080d14;
+      --surface:  #0e1623;
+      --border:   rgba(99,179,237,0.12);
+      --accent:   #4ea8de;
+      --accent2:  #a78bfa;
+      --gold:     #f6ad55;
+      --green:    #68d391;
+      --red:      #fc8181;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --card-bg:  rgba(14,22,35,0.85);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Background atmosphere ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 60% 50% at 20% 20%, rgba(78,168,222,0.07) 0%, transparent 70%),
+        radial-gradient(ellipse 50% 40% at 80% 80%, rgba(167,139,250,0.06) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Login Screen ── */
+    #login-screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      backdrop-filter: blur(4px);
+    }
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 48px 40px;
+      width: 380px;
+      text-align: center;
+      box-shadow: 0 40px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(78,168,222,0.1);
+    }
+    .login-logo { font-size: 40px; margin-bottom: 12px; }
+    .login-title {
+      font-family: 'DM Serif Display', serif;
+      font-size: 26px;
+      margin-bottom: 6px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .login-sub { color: var(--muted); font-size: 13px; margin-bottom: 32px; }
+    .input-group { position: relative; margin-bottom: 16px; text-align: left; }
+    .input-group label { font-size: 11px; font-weight: 600; color: var(--muted); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 6px; display: block; }
+    .input-group input {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 16px;
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-group input:focus { border-color: var(--accent); }
+    .btn-primary {
+      width: 100%;
+      padding: 13px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none;
+      border-radius: 12px;
+      color: white;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    .login-error { color: var(--red); font-size: 13px; margin-top: 12px; display: none; }
+
+    /* ── Layout ── */
+    #app { display: none; position: relative; z-index: 1; }
+
+    .sidebar {
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      width: 240px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 28px 0;
+      z-index: 50;
+    }
+    .sidebar-logo {
+      padding: 0 24px 28px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo-title {
+      font-family: 'DM Serif Display', serif;
+      font-size: 20px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .sidebar-logo-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .nav { flex: 1; padding: 20px 12px; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--muted);
+      transition: all 0.15s;
+      margin-bottom: 4px;
+    }
+    .nav-item:hover { background: rgba(78,168,222,0.08); color: var(--text); }
+    .nav-item.active { background: rgba(78,168,222,0.14); color: var(--accent); }
+    .nav-item .icon { font-size: 17px; width: 22px; text-align: center; }
+    .sidebar-footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+    }
+    .logout-btn {
+      font-size: 13px;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      transition: all 0.15s;
+    }
+    .logout-btn:hover { color: var(--red); background: rgba(252,129,129,0.08); }
+
+    .main { margin-left: 240px; min-height: 100vh; padding: 40px; }
+    .page-header { margin-bottom: 32px; }
+    .page-title { font-family: 'DM Serif Display', serif; font-size: 28px; margin-bottom: 4px; }
+    .page-sub { font-size: 14px; color: var(--muted); }
+
+    /* ── Stats Grid ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .stat-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      top: -30px; right: -30px;
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      opacity: 0.08;
+    }
+    .stat-card.blue::before   { background: var(--accent); }
+    .stat-card.purple::before { background: var(--accent2); }
+    .stat-card.gold::before   { background: var(--gold); }
+    .stat-card.green::before  { background: var(--green); }
+    .stat-icon { font-size: 20px; margin-bottom: 12px; }
+    .stat-value { font-size: 32px; font-weight: 700; font-family: 'DM Serif Display', serif; }
+    .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    /* ── Tables ── */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .card-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-title { font-size: 15px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      padding: 12px 24px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 14px 24px;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(99,179,237,0.05);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(78,168,222,0.04); }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge.active  { background: rgba(104,211,145,0.15); color: var(--green); }
+    .badge.inactive{ background: rgba(252,129,129,0.15); color: var(--red); }
+    .badge.used    { background: rgba(100,116,139,0.2);  color: var(--muted); }
+    .badge.pending { background: rgba(246,173,85,0.15);  color: var(--gold); }
+
+    /* ── Forms ── */
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 6px; display: block; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--accent); }
+    .form-group select option { background: var(--surface); }
+    .form-group textarea { resize: vertical; min-height: 80px; }
+    .btn-sm {
+      padding: 8px 16px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-sm:hover { opacity: 0.85; }
+    .btn-danger { background: linear-gradient(135deg, #f56565, #c53030); }
+
+    /* ── Page visibility ── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Loading ── */
+    .loading { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+    .empty   { color: var(--muted); font-size: 14px; padding: 32px; text-align: center; }
+
+    /* ── Promo result ── */
+    .promo-result {
+      background: rgba(104,211,145,0.08);
+      border: 1px solid rgba(104,211,145,0.25);
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 16px;
+      display: none;
+    }
+    .promo-code {
+      font-size: 28px;
+      font-family: 'DM Serif Display', serif;
+      letter-spacing: 3px;
+      color: var(--green);
+      margin: 8px 0;
+    }
+    .copy-btn {
+      background: rgba(104,211,145,0.15);
+      border: 1px solid rgba(104,211,145,0.3);
+      color: var(--green);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 32px; right: 32px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 20px;
+      font-size: 13px;
+      z-index: 999;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all 0.3s;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    @media (max-width: 1100px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 768px) { .sidebar { display: none; } .main { margin-left: 0; padding: 24px; } }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">📚</div>
+    <div class="login-title">TeacherMada</div>
+    <div class="login-sub">Tableau de bord administrateur</div>
+    <div class="input-group">
+      <label>Email</label>
+      <input type="email" id="login-email" placeholder="admin@teachermada.mg" />
+    </div>
+    <div class="input-group">
+      <label>Mot de passe</label>
+      <input type="password" id="login-pwd" placeholder="••••••••" />
+    </div>
+    <button class="btn-primary" onclick="login()">Connexion</button>
+    <div class="login-error" id="login-error">❌ Identifiants invalides</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     APP
+══════════════════════════════════════════ -->
+<div id="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-title">TeacherMada</div>
+      <div class="sidebar-logo-sub">Admin Dashboard</div>
+    </div>
+    <nav class="nav">
+      <div class="nav-item active" onclick="showPage('dashboard')" id="nav-dashboard">
+        <span class="icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="showPage('books')" id="nav-books">
+        <span class="icon">📗</span> Livres
+      </div>
+      <div class="nav-item" onclick="showPage('promos')" id="nav-promos">
+        <span class="icon">🎟️</span> Codes Promo
+      </div>
+      <div class="nav-item" onclick="showPage('sales')" id="nav-sales">
+        <span class="icon">💰</span> Ventes
+      </div>
+      <div class="nav-item" onclick="showPage('pages')" id="nav-pages">
+        <span class="icon">📱</span> Pages FB
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="logout-btn" onclick="logout()">
+        <span>⬅️</span> Déconnexion
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main">
+
+    <!-- ── DASHBOARD ── -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <div class="page-title">Dashboard</div>
+        <div class="page-sub">Vue d'ensemble de TeacherMada</div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card blue">
+          <div class="stat-icon">📗</div>
+          <div class="stat-value" id="stat-books">—</div>
+          <div class="stat-label">Livres actifs</div>
+        </div>
+        <div class="stat-card gold">
+          <div class="stat-icon">🎟️</div>
+          <div class="stat-value" id="stat-promos">—</div>
+          <div class="stat-label">Codes actifs</div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-icon">💰</div>
+          <div class="stat-value" id="stat-sales">—</div>
+          <div class="stat-label">Ventes totales</div>
+        </div>
+        <div class="stat-card purple">
+          <div class="stat-icon">🧠</div>
+          <div class="stat-value" id="stat-users">—</div>
+          <div class="stat-label">Utilisateurs actifs</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">📈 Ventes récentes</span>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Livre</th><th>Acheteur PSID</th><th>Montant</th></tr></thead>
+          <tbody id="recent-sales"><tr><td colspan="4" class="loading">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── LIVRES ── -->
+    <div class="page" id="page-books">
+      <div class="page-header">
+        <div class="page-title">Catalogue des livres</div>
+        <div class="page-sub">Gérer les livres PDF dans Supabase Storage</div>
+      </div>
+      <div class="card" style="padding:24px;margin-bottom:24px">
+        <div class="card-title" style="margin-bottom:20px">➕ Ajouter un livre</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Titre</label>
+            <input type="text" id="book-title" placeholder="Ex: Anglais en 5 minutes" />
+          </div>
+          <div class="form-group">
+            <label>Matière</label>
+            <input type="text" id="book-subject" placeholder="Ex: Anglais, Maths, Sciences" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Niveau</label>
+            <input type="text" id="book-level" placeholder="Ex: Lycée, Université" />
+          </div>
+          <div class="form-group">
+            <label>Prix (MGA)</label>
+            <input type="number" id="book-price" placeholder="5000" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Description (pour l'IA)</label>
+          <textarea id="book-desc" placeholder="Décrivez le livre — l'IA utilisera cette description pour recommander aux étudiants..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Chemin Storage (books/nom-du-fichier.pdf)</label>
+          <input type="text" id="book-path" placeholder="books/ANGLAIS_5MIN.pdf" />
+        </div>
+        <button class="btn-sm" onclick="addBook()">➕ Ajouter le livre</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">📚 Tous les livres</span></div>
+        <table>
+          <thead><tr><th>Titre</th><th>Matière</th><th>Niveau</th><th>Prix</th><th>Statut</th><th>Actions</th></tr></thead>
+          <tbody id="books-table"><tr><td colspan="6" class="loading">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── PROMOS ── -->
+    <div class="page" id="page-promos">
+      <div class="page-header">
+        <div class="page-title">Codes promo</div>
+        <div class="page-sub">Générer et gérer les codes d'achat</div>
+      </div>
+      <div class="card" style="padding:24px;margin-bottom:24px">
+        <div class="card-title" style="margin-bottom:20px">🎟️ Générer un code</div>
+        <div class="form-group">
+          <label>Livre</label>
+          <select id="promo-book-select">
+            <option value="">Chargement des livres…</option>
+          </select>
+        </div>
+        <button class="btn-sm" onclick="generatePromo()">🎟️ Générer le code</button>
+        <div class="promo-result" id="promo-result">
+          <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Code généré</div>
+          <div class="promo-code" id="generated-code">TM-XXXXXX</div>
+          <div style="font-size:12px;color:var(--muted)" id="promo-expiry"></div>
+          <button class="copy-btn" onclick="copyCode()">📋 Copier le code</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">🗂️ Codes récents</span></div>
+        <table>
+          <thead><tr><th>Code</th><th>Livre</th><th>Statut</th><th>Expire le</th><th>Créé par</th></tr></thead>
+          <tbody id="promos-table"><tr><td colspan="5" class="loading">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── VENTES ── -->
+    <div class="page" id="page-sales">
+      <div class="page-header">
+        <div class="page-title">Historique des ventes</div>
+        <div class="page-sub">Toutes les transactions enregistrées</div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">💰 Ventes</span></div>
+        <table>
+          <thead><tr><th>Date</th><th>Livre</th><th>Acheteur</th><th>Montant</th><th>Statut</th></tr></thead>
+          <tbody id="sales-table"><tr><td colspan="5" class="loading">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── PAGES FB ── -->
+    <div class="page" id="page-pages">
+      <div class="page-header">
+        <div class="page-title">Pages Facebook</div>
+        <div class="page-sub">Configurer les pages connectées au bot</div>
+      </div>
+      <div class="card" style="padding:24px;margin-bottom:24px">
+        <div class="card-title" style="margin-bottom:20px">➕ Ajouter une page</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>ID de la Page Facebook</label>
+            <input type="text" id="fb-page-id" placeholder="123456789012345" />
+          </div>
+          <div class="form-group">
+            <label>Nom de la page</label>
+            <input type="text" id="fb-page-name" placeholder="TeacherMada Officiel" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Token d'accès (Page Access Token)</label>
+          <input type="password" id="fb-access-token" placeholder="EAA..." />
+        </div>
+        <button class="btn-sm" onclick="addPage()">➕ Ajouter la page</button>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">📱 Pages configurées</span></div>
+        <table>
+          <thead><tr><th>ID Page</th><th>Nom</th><th>Statut</th><th>Actions</th></tr></thead>
+          <tbody id="pages-table"><tr><td colspan="4" class="loading">Chargement…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// CONFIG — Remplacer par vos valeurs Supabase
+// ════════════════════════════════════════════════════════════
+const SUPABASE_URL     = 'https://qlgazpwczgmvhypdocbx.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsZ2F6cHdjemdtdmh5cGRvY2J4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1Mjk2OTUsImV4cCI6MjA4ODEwNTY5NX0.Kj6V5CLRK8IlU3fBtMpFoLEDzToMaDzJiofHUlFDXAs'; // Jamais la service_role !
+
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUser = null;
+
+// ════════════════════════════════════════════════════════════
+// AUTH
+// ════════════════════════════════════════════════════════════
+async function login() {
+  const email = document.getElementById('login-email').value;
+  const pwd   = document.getElementById('login-pwd').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+
+  const { data, error } = await db.auth.signInWithPassword({ email, password: pwd });
+
+  if (error) {
+    errEl.style.display = 'block';
+    return;
+  }
+
+  currentUser = data.user;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  initApp();
+}
+
+async function logout() {
+  await db.auth.signOut();
+  location.reload();
+}
+
+// Auto-login si session active
+window.addEventListener('DOMContentLoaded', async () => {
+  const { data } = await db.auth.getSession();
+  if (data.session) {
+    currentUser = data.session.user;
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    initApp();
+  }
+  // Enter key for login
+  document.getElementById('login-pwd').addEventListener('keydown', e => {
+    if (e.key === 'Enter') login();
+  });
+});
+
+// ════════════════════════════════════════════════════════════
+// APP INIT
+// ════════════════════════════════════════════════════════════
+function initApp() {
+  loadDashboard();
+}
+
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+
+  if (name === 'books')  loadBooks();
+  if (name === 'promos') { loadPromos(); loadBooksForSelect(); }
+  if (name === 'sales')  loadSales();
+  if (name === 'pages')  loadPages();
+}
+
+// ════════════════════════════════════════════════════════════
+// DASHBOARD
+// ════════════════════════════════════════════════════════════
+async function loadDashboard() {
+  const [books, promos, sales, users] = await Promise.all([
+    db.from('books').select('id', { count: 'exact' }).eq('is_active', true),
+    db.from('promos').select('id', { count: 'exact' }).eq('used', false).gt('expires_at', new Date().toISOString()),
+    db.from('sales').select('id', { count: 'exact' }),
+    db.from('ai_memory').select('id', { count: 'exact' })
+  ]);
+
+  document.getElementById('stat-books').textContent  = books.count ?? '—';
+  document.getElementById('stat-promos').textContent = promos.count ?? '—';
+  document.getElementById('stat-sales').textContent  = sales.count ?? '—';
+  document.getElementById('stat-users').textContent  = users.count ?? '—';
+
+  const { data: recentSales } = await db
+    .from('sales')
+    .select('sold_at, sender_psid, amount, currency, books(title)')
+    .order('sold_at', { ascending: false })
+    .limit(10);
+
+  const tbody = document.getElementById('recent-sales');
+  if (!recentSales?.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">Aucune vente</td></tr>';
+    return;
+  }
+  tbody.innerHTML = recentSales.map(s => `
+    <tr>
+      <td>${fmt(s.sold_at)}</td>
+      <td>${s.books?.title || '—'}</td>
+      <td><code style="font-size:11px;opacity:0.7">${s.sender_psid?.slice(0,12)}…</code></td>
+      <td><b>${s.amount?.toLocaleString()} ${s.currency}</b></td>
+    </tr>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// BOOKS
+// ════════════════════════════════════════════════════════════
+async function loadBooks() {
+  const { data } = await db.from('books').select('*').order('created_at', { ascending: false });
+  const tbody = document.getElementById('books-table');
+  if (!data?.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Aucun livre</td></tr>'; return; }
+  tbody.innerHTML = data.map(b => `
+    <tr>
+      <td><b>${b.title}</b></td>
+      <td>${b.subject}</td>
+      <td>${b.level}</td>
+      <td>${b.price?.toLocaleString()} ${b.currency}</td>
+      <td><span class="badge ${b.is_active ? 'active' : 'inactive'}">${b.is_active ? '✅ Actif' : '❌ Inactif'}</span></td>
+      <td>
+        <button class="btn-sm btn-danger" onclick="toggleBook('${b.id}', ${b.is_active})" style="font-size:11px;padding:5px 10px">
+          ${b.is_active ? 'Désactiver' : 'Activer'}
+        </button>
+      </td>
+    </tr>`).join('');
+}
+
+async function addBook() {
+  const title   = document.getElementById('book-title').value;
+  const subject = document.getElementById('book-subject').value;
+  const level   = document.getElementById('book-level').value;
+  const price   = parseFloat(document.getElementById('book-price').value);
+  const desc    = document.getElementById('book-desc').value;
+  const path    = document.getElementById('book-path').value;
+
+  if (!title || !path) return toast('❌ Titre et chemin requis');
+
+  const { error } = await db.from('books').insert({ title, subject, level, price, description: desc, storage_path: path });
+  if (error) return toast('❌ ' + error.message);
+
+  toast('✅ Livre ajouté !');
+  loadBooks();
+  loadBooksForSelect();
+}
+
+async function toggleBook(id, isActive) {
+  await db.from('books').update({ is_active: !isActive }).eq('id', id);
+  loadBooks();
+}
+
+// ════════════════════════════════════════════════════════════
+// PROMOS
+// ════════════════════════════════════════════════════════════
+async function loadBooksForSelect() {
+  const { data } = await db.from('books').select('id, title').eq('is_active', true);
+  const sel = document.getElementById('promo-book-select');
+  sel.innerHTML = data?.map(b => `<option value="${b.id}">${b.title}</option>`).join('') || '<option>Aucun livre</option>';
+}
+
+async function generatePromo() {
+  const bookId = document.getElementById('promo-book-select').value;
+  if (!bookId) return toast('❌ Sélectionnez un livre');
+
+  // Générer code côté client (même logique que l'Edge Function)
+  const bytes = new Uint8Array(3);
+  crypto.getRandomValues(bytes);
+  const code = 'TM-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await db.from('promos').insert({
+    code, book_id: bookId, expires_at: expiresAt,
+    created_by: currentUser?.email || 'admin-dashboard'
+  });
+
+  if (error) return toast('❌ ' + error.message);
+
+  document.getElementById('generated-code').textContent = code;
+  document.getElementById('promo-expiry').textContent = `Expire : ${fmt(expiresAt)}`;
+  document.getElementById('promo-result').style.display = 'block';
+  toast('✅ Code généré !');
+  loadPromos();
+}
+
+async function loadPromos() {
+  const { data } = await db
+    .from('promos')
+    .select('*, books(title)')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  const tbody = document.getElementById('promos-table');
+  if (!data?.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Aucun code</td></tr>'; return; }
+
+  tbody.innerHTML = data.map(p => {
+    const expired = new Date() > new Date(p.expires_at);
+    const status = p.used ? 'used' : expired ? 'inactive' : 'active';
+    const label  = p.used ? '✅ Utilisé' : expired ? '⏰ Expiré' : '🟢 Disponible';
+    return `<tr>
+      <td><code style="letter-spacing:2px;font-size:14px">${p.code}</code></td>
+      <td>${p.books?.title || '—'}</td>
+      <td><span class="badge ${status}">${label}</span></td>
+      <td>${fmt(p.expires_at)}</td>
+      <td style="font-size:11px;opacity:0.6">${p.created_by || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function copyCode() {
+  const code = document.getElementById('generated-code').textContent;
+  navigator.clipboard.writeText(code).then(() => toast('📋 Code copié !'));
+}
+
+// ════════════════════════════════════════════════════════════
+// SALES
+// ════════════════════════════════════════════════════════════
+async function loadSales() {
+  const { data } = await db
+    .from('sales')
+    .select('*, books(title)')
+    .order('sold_at', { ascending: false })
+    .limit(100);
+
+  const tbody = document.getElementById('sales-table');
+  if (!data?.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">Aucune vente</td></tr>'; return; }
+
+  tbody.innerHTML = data.map(s => `
+    <tr>
+      <td>${fmt(s.sold_at)}</td>
+      <td>${s.books?.title || '—'}</td>
+      <td><code style="font-size:11px">${s.sender_psid}</code></td>
+      <td><b>${s.amount?.toLocaleString()} ${s.currency}</b></td>
+      <td><span class="badge active">✅ ${s.status}</span></td>
+    </tr>`).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGES FB
+// ════════════════════════════════════════════════════════════
+async function loadPages() {
+  const { data } = await db.from('pages').select('page_id, page_name, is_active, created_at').order('created_at');
+  const tbody = document.getElementById('pages-table');
+  if (!data?.length) { tbody.innerHTML = '<tr><td colspan="4" class="empty">Aucune page configurée</td></tr>'; return; }
+  tbody.innerHTML = data.map(p => `
+    <tr>
+      <td><code>${p.page_id}</code></td>
+      <td>${p.page_name || '—'}</td>
+      <td><span class="badge ${p.is_active ? 'active' : 'inactive'}">${p.is_active ? '✅ Active' : '❌ Inactive'}</span></td>
+      <td>
+        <button class="btn-sm btn-danger" onclick="togglePage('${p.page_id}', ${p.is_active})" style="font-size:11px;padding:5px 10px">
+          ${p.is_active ? 'Désactiver' : 'Activer'}
+        </button>
+      </td>
+    </tr>`).join('');
+}
+
+async function addPage() {
+  const pageId  = document.getElementById('fb-page-id').value.trim();
+  const name    = document.getElementById('fb-page-name').value.trim();
+  const token   = document.getElementById('fb-access-token').value.trim();
+  if (!pageId || !token) return toast('❌ ID et token requis');
+
+  const { error } = await db.from('pages').insert({ page_id: pageId, page_name: name, access_token: token });
+  if (error) return toast('❌ ' + error.message);
+  toast('✅ Page ajoutée !');
+  loadPages();
+}
+
+async function togglePage(pageId, isActive) {
+  await db.from('pages').update({ is_active: !isActive }).eq('page_id', pageId);
+  loadPages();
+}
+
+// ════════════════════════════════════════════════════════════
+// UTILS
+// ════════════════════════════════════════════════════════════
+function fmt(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('fr-MG', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>

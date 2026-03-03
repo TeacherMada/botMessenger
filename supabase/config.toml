@@ -1,0 +1,32 @@
+# supabase/config.toml
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[functions.webhook]
+verify_jwt = false   # Facebook ne peut pas signer en JWT
+
+[functions.download]
+verify_jwt = false   # Accès public via token signé
+
+[functions.cleanup]
+verify_jwt = false   # Protégé par x-cleanup-secret header
