@@ -1,19 +1,345 @@
+// supabase/functions/_shared/db.ts
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+export const supabase = createClient(
+  Deno.env.get('SUPABASE_URL')!,
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+);
+// fin db.ts
+
+// supabase/functions/_shared/messenger.ts
+
+export async function sendMessage(
+  recipientId: string,
+  message: Record<string, unknown>,
+  pageAccessToken: string
+): Promise<void> {
+  const url = `https://graph.facebook.com/v19.0/me/messages?access_token=${pageAccessToken}`;
+
+  const body = {
+    recipient: { id: recipientId },
+    message,
+    messaging_type: 'RESPONSE',
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`❌ sendMessage failed (${res.status}):`, err);
+  }
+} //fin Messenger.ts
+// supabase/functions/_shared/gemini.ts
+
+const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!;
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+const SYSTEM_PROMPT = `Tu es Tsanta, une assistante commerciale chaleureuse et professionnelle.
+Tu aides les clients à découvrir et acheter des livres numériques.
+Tu parles en français ou en malgache selon le client.
+Sois concise, amicale et toujours orientée vers la vente.`;
+
+export async function callGemini(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>,
+  memorySummary: string
+): Promise<string> {
+  // Construire le contexte avec la mémoire
+  const systemWithMemory = memorySummary
+    ? `${SYSTEM_PROMPT}\n\nContexte mémorisé sur ce client :\n${memorySummary}`
+    : SYSTEM_PROMPT;
+
+  // Convertir l'historique au format Gemini
+  const contents = history.map(h => ({
+    role: h.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: h.content }],
+  }));
+
+  // Ajouter le message actuel
+  contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
+  const payload = {
+    systemInstruction: { parts: [{ text: systemWithMemory }] },
+    contents,
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 500,
+    },
+  };
+
+  const res = await fetch(GEMINI_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('❌ Gemini error:', err);
+    throw new Error(`Gemini HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Réponse Gemini vide');
+
+  return text.trim();
+} //fin gemini.ts
+
+// supabase/functions/_shared/memory.ts
+import { supabase } from './db.ts';
+
+const MAX_HISTORY = 20;       // messages récents envoyés à Gemini
+const SUMMARY_THRESHOLD = 30; // résumer après X messages
+
+// ── Historique récent ─────────────────────────────────────────
+export async function getRecentHistory(
+  senderId: string
+): Promise<Array<{ role: string; content: string }>> {
+  const { data, error } = await supabase
+    .from('conversation_history')
+    .select('role, content')
+    .eq('sender_id', senderId)
+    .order('created_at', { ascending: false })
+    .limit(MAX_HISTORY);
+
+  if (error) {
+    console.error('❌ getRecentHistory:', error.message);
+    return [];
+  }
+
+  // Retourner dans l'ordre chronologique
+  return (data ?? []).reverse();
+}
+
+// ── Sauvegarder un message ────────────────────────────────────
+export async function saveToHistory(
+  senderId: string,
+  pageId: string,
+  role: 'user' | 'assistant',
+  content: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('conversation_history')
+    .insert({ sender_id: senderId, page_id: pageId, role, content });
+
+  if (error) console.error('❌ saveToHistory:', error.message);
+}
+
+// ── Mémoire persistante (résumé) ─────────────────────────────
+export async function getOrCreateMemory(
+  senderId: string,
+  pageId: string
+): Promise<{ id: string; summary: string; message_count: number } | null> {
+  const { data, error } = await supabase
+    .from('user_memory')
+    .select('id, summary, message_count')
+    .eq('sender_id', senderId)
+    .eq('page_id', pageId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('❌ getOrCreateMemory:', error.message);
+    return null;
+  }
+
+  if (data) return data;
+
+  // Créer une entrée vierge
+  const { data: created, error: createErr } = await supabase
+    .from('user_memory')
+    .insert({ sender_id: senderId, page_id: pageId, summary: '', message_count: 0 })
+    .select('id, summary, message_count')
+    .single();
+
+  if (createErr) {
+    console.error('❌ createMemory:', createErr.message);
+    return null;
+  }
+
+  return created;
+}
+
+// ── Mettre à jour la mémoire après un échange ────────────────
+export async function updateMemoryAfterMessage(
+  senderId: string,
+  pageId: string,
+  memory: { id: string; summary: string; message_count: number }
+): Promise<void> {
+  const newCount = (memory.message_count ?? 0) + 1;
+
+  // Résumer si on dépasse le seuil
+  if (newCount % SUMMARY_THRESHOLD === 0) {
+    const history = await getRecentHistory(senderId);
+    const newSummary = await summarizeHistory(history, memory.summary);
+
+    await supabase
+      .from('user_memory')
+      .update({ summary: newSummary, message_count: newCount, updated_at: new Date().toISOString() })
+      .eq('id', memory.id);
+  } else {
+    await supabase
+      .from('user_memory')
+      .update({ message_count: newCount, updated_at: new Date().toISOString() })
+      .eq('id', memory.id);
+  }
+}
+
+// ── Résumer l'historique via Gemini ──────────────────────────
+async function summarizeHistory(
+  history: Array<{ role: string; content: string }>,
+  existingSummary: string
+): Promise<string> {
+  const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY')!;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+  const historyText = history.map(h => `${h.role}: ${h.content}`).join('\n');
+
+  const prompt = existingSummary
+    ? `Résumé existant :\n${existingSummary}\n\nNouvelle conversation :\n${historyText}\n\nFais un résumé court (max 200 mots) de ce que tu sais sur ce client (préférences, achats, questions, nom si mentionné).`
+    : `Conversation :\n${historyText}\n\nFais un résumé court (max 200 mots) de ce que tu sais sur ce client.`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    }),
+  });
+
+  if (!res.ok) return existingSummary;
+
+  const data = await res.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? existingSummary;
+} //fin memory
+
+// supabase/functions/_shared/promo.ts
+import { supabase } from './db.ts';
+import { sendMessage } from './messenger.ts';
+
+// ── Créer un code promo (usage unique, 24h) ───────────────────
+export async function createPromoCode(
+  bookId: string,
+  createdBy: string
+): Promise<{ code: string; expiresAt: string } | null> {
+  const code = 'TM-' + Math.random().toString(16).slice(2, 8).toUpperCase();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase
+    .from('promo_codes')
+    .insert({
+      code,
+      book_id: bookId,
+      created_by: createdBy,
+      expires_at: expiresAt,
+      is_used: false,
+    });
+
+  if (error) {
+    console.error('❌ createPromoCode:', error.message);
+    return null;
+  }
+
+  return { code, expiresAt };
+}
+
+// ── Valider et utiliser un code promo ─────────────────────────
+export async function handlePromoCode(
+  code: string,
+  senderId: string,
+  pageId: string,
+  pageAccessToken: string
+): Promise<void> {
+  const normalizedCode = code.toUpperCase();
+
+  // 1. Chercher le code
+  const { data: promo, error } = await supabase
+    .from('promo_codes')
+    .select('id, book_id, is_used, expires_at, books(title, file_url, description)')
+    .eq('code', normalizedCode)
+    .maybeSingle();
+
+  if (error || !promo) {
+    await sendMessage(senderId, {
+      text: `❌ Code "${normalizedCode}" introuvable. Vérifiez l'orthographe.`
+    }, pageAccessToken);
+    return;
+  }
+
+  // 2. Vérifier si déjà utilisé
+  if (promo.is_used) {
+    await sendMessage(senderId, {
+      text: `⚠️ Ce code a déjà été utilisé. Chaque code est à usage unique.`
+    }, pageAccessToken);
+    return;
+  }
+
+  // 3. Vérifier l'expiration
+  if (new Date(promo.expires_at) < new Date()) {
+    await sendMessage(senderId, {
+      text: `⏰ Ce code a expiré. Contactez-nous pour en obtenir un nouveau.`
+    }, pageAccessToken);
+    return;
+  }
+
+  // 4. Marquer comme utilisé
+  const { error: updateErr } = await supabase
+    .from('promo_codes')
+    .update({
+      is_used: true,
+      used_by: senderId,
+      used_at: new Date().toISOString(),
+    })
+    .eq('id', promo.id);
+
+  if (updateErr) {
+    console.error('❌ handlePromoCode update:', updateErr.message);
+    await sendMessage(senderId, {
+      text: '❌ Erreur lors de la validation. Réessayez.'
+    }, pageAccessToken);
+    return;
+  }
+
+  // 5. Enregistrer la vente
+  await supabase.from('sales').insert({
+    book_id: promo.book_id,
+    buyer_id: senderId,
+    page_id: pageId,
+    promo_code_id: promo.id,
+  });
+
+  // 6. Envoyer le lien de téléchargement
+  const book = promo.books as unknown as { title: string; file_url: string; description: string };
+
+  await sendMessage(senderId, {
+    text:
+      `✅ Code validé ! Voici votre livre :\n\n` +
+      `📗 *${book.title}*\n\n` +
+      `📥 Téléchargez ici :\n${book.file_url}\n\n` +
+      `Bonne lecture ! 😊`
+  }, pageAccessToken);
+} //fin promo
 // supabase/functions/webhook/index.ts
 // ============================================================
 // EDGE FUNCTION PRINCIPALE — Webhook Facebook Messenger
 // Remplace complètement le serveur Express/Render
 // ============================================================
 
-import { supabase } from '../_shared/db.ts';
-import { sendMessage } from '../_shared/messenger.ts';
-import { callGemini } from '../_shared/gemini.ts';
-import { handlePromoCode, createPromoCode } from '../_shared/promo.ts';
-import {
-  getOrCreateMemory,
-  getRecentHistory,
-  saveToHistory,
-  updateMemoryAfterMessage
-} from '../_shared/memory.ts';
+//import { supabase } from '../_shared/db.ts';
+//import { sendMessage } from '../_shared/messenger.ts';
+//import { callGemini } from '../_shared/gemini.ts';
+//import { handlePromoCode, createPromoCode } from '../_shared/promo.ts';
+//import {
+  //getOrCreateMemory,
+ // getRecentHistory,
+  //saveToHistory,
+ // updateMemoryAfterMessage
+//} from '../_shared/memory.ts';
 
 const VERIFY_TOKEN = Deno.env.get('VERIFY_TOKEN')!;
 const PREFIX = '@';
