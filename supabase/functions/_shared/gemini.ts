@@ -162,37 +162,48 @@ async function buildPayload(
 }
 
 // ── Appel principal avec rotation clés × modèles ─────────────
+// ── Appel principal avec rotation clés × modèles ─────────────
 export async function callGemini(
   userMessage: string,
   history: Array<{ role: string; content: string }>,
   memorySummary: string
-): Promise<string> {
+): Promise<{
+  reply: string;
+  detected_language: string;
+  intent: string;
+  next_action: string;
+}> {
+
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) throw new Error('GEMINI_API_KEY non configurée');
 
   const payload = await buildPayload(userMessage, history, memorySummary);
   const errors: string[] = [];
 
-  // Rotation : pour chaque clé → essayer chaque modèle dans l'ordre
   for (const apiKey of apiKeys) {
     for (const model of GEMINI_MODELS) {
       try {
         console.log(`🔄 Gemini: essai ${model} / key …${apiKey.slice(-6)}`);
-        const result = await callGeminiOnce(apiKey, model, payload);
+
+        const rawText = await callGeminiOnce(apiKey, model, payload);
+
         console.log(`✅ Gemini: succès avec ${model}`);
-        return result;
+
+        // 🔥 IMPORTANT : On parse ici directement
+        const parsed = parseGeminiResponse(rawText);
+
+        return parsed;
+
       } catch (err: any) {
         const msg = `[key …${apiKey.slice(-6)}][${model}] ${err.message}`;
         errors.push(msg);
         console.warn(`⚠️ Gemini échec: ${msg}`);
 
-        // Clé invalide → inutile d'essayer les autres modèles avec cette clé
         if (err.status === 401 || err.status === 403) {
           console.warn(`🔑 Clé invalide — passage à la clé suivante`);
           break;
         }
 
-        // Sinon (quota/rate limit/erreur réseau) → modèle suivant
         await new Promise(r => setTimeout(r, 300));
       }
     }
@@ -200,7 +211,6 @@ export async function callGemini(
 
   throw new Error(`Gemini: tous les providers ont échoué.\n${errors.join('\n')}`);
 }
-
 // ── Parse la réponse JSON de Gemini ──────────────────────────
 export function parseGeminiResponse(raw: string): {
   reply: string;
