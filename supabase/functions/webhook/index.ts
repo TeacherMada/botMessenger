@@ -4,16 +4,16 @@
 // Remplace complètement le serveur Express/Render
 // ============================================================
 
-import { supabase } from '../_shared/db.ts';
-import { sendMessage } from '../_shared/messenger.ts';
-import { callGemini } from '../_shared/gemini.ts';
-import { handlePromoCode, createPromoCode } from '../_shared/promo.ts';
+import { supabase } from './_shared/db.ts';
+import { sendMessage } from './_shared/messenger.ts';
+import { callGemini } from './_shared/gemini.ts';
+import { handlePromoCode, createPromoCode } from './_shared/promo.ts';
 import {
   getOrCreateMemory,
   getRecentHistory,
   saveToHistory,
   updateMemoryAfterMessage
-} from '../_shared/memory.ts';
+} from './_shared/memory.ts';
 
 const VERIFY_TOKEN = Deno.env.get('VERIFY_TOKEN')!;
 const PREFIX = '@';
