@@ -149,7 +149,7 @@ async function buildPayload(
     contents,
     generationConfig: {
       temperature: 0.75,
-      maxOutputTokens: 600,
+      maxOutputTokens: 1000,
       responseMimeType: 'application/json',
     },
     safetySettings: [
