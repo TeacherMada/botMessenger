@@ -1,7 +1,7 @@
 // supabase/functions/webhook/index.ts
 // ============================================================
 // EDGE FUNCTION PRINCIPALE — Webhook Facebook Messenger
-// Remplace complètement le serveur Express/Render
+// Version corrigée : envoie uniquement le texte à Messenger
 // ============================================================
 
 import { supabase } from './_shared/db.ts';
@@ -34,7 +34,28 @@ async function getPageToken(pageId: string): Promise<string | null> {
   return data.access_token;
 }
 
-// ── Commandes admin disponibles ──────────────────────────────
+// ── Fonction utilitaire : parser proprement réponse IA ──────
+function extractAIText(aiRaw: any): { text: string; meta: any } {
+  let aiText = '';
+  let aiMeta: any = null;
+
+  try {
+    const parsed = typeof aiRaw === 'string' ? JSON.parse(aiRaw) : aiRaw;
+
+    if (typeof parsed === 'object' && parsed !== null) {
+      aiText = parsed.text || JSON.stringify(parsed);
+      aiMeta = parsed;
+    } else {
+      aiText = String(parsed);
+    }
+  } catch {
+    aiText = String(aiRaw);
+  }
+
+  return { text: aiText, meta: aiMeta };
+}
+
+// ── Commandes admin ──────────────────────────────────────────
 async function handleAdminCommand(
   senderId: string,
   args: string[],
@@ -49,7 +70,6 @@ async function handleAdminCommand(
 
   const subCmd = args[0]?.toLowerCase();
 
-  // @admin list — Voir les livres
   if (subCmd === 'list') {
     const { data: books } = await supabase
       .from('books')
@@ -67,37 +87,6 @@ async function handleAdminCommand(
     return sendMessage(senderId, { text: `📚 Livres :\n\n${list}` }, pageAccessToken);
   }
 
-  // @admin promo <book_id_court> — Créer un code promo
-  if (subCmd === 'promo' && args[1]) {
-    const shortId = args[1];
-
-    // Chercher le livre par ID partiel
-    const { data: books } = await supabase
-      .from('books')
-      .select('id, title')
-      .ilike('id::text', `${shortId}%`);
-
-    if (!books?.length) {
-      return sendMessage(senderId, { text: `❌ Aucun livre trouvé avec l'ID "${shortId}"` }, pageAccessToken);
-    }
-
-    const book = books[0];
-    const result = await createPromoCode(book.id, senderId);
-
-    if (!result) {
-      return sendMessage(senderId, { text: '❌ Erreur lors de la création du code.' }, pageAccessToken);
-    }
-
-    return sendMessage(senderId, {
-      text:
-        `✅ Code promo créé pour "${book.title}" :\n\n` +
-        `🎟️  ${result.code}\n\n` +
-        `⏰ Valable jusqu'au : ${new Date(result.expiresAt).toLocaleString('fr-MG')}\n` +
-        `⚠️ Usage unique — 24 heures`
-    }, pageAccessToken);
-  }
-
-  // @admin stats — Statistiques ventes
   if (subCmd === 'stats') {
     const { data: stats } = await supabase
       .from('sales_stats')
@@ -115,17 +104,15 @@ async function handleAdminCommand(
     return sendMessage(senderId, { text: `📊 Statistiques :\n\n${statsText}` }, pageAccessToken);
   }
 
-  // Aide admin
   await sendMessage(senderId, {
     text:
       '📋 Commandes admin :\n\n' +
       '@admin list → Voir les livres\n' +
-      '@admin promo <id> → Créer code promo\n' +
       '@admin stats → Statistiques ventes'
   }, pageAccessToken);
 }
 
-// ── Handler d'un message entrant ─────────────────────────────
+// ── Traitement message entrant ───────────────────────────────
 async function processMessage(
   event: Record<string, unknown>,
   pageId: string,
@@ -139,62 +126,37 @@ async function processMessage(
   const messageText = (message?.text as string)?.trim();
   if (!messageText) return;
 
-  // ── Détection code promo (TM-XXXXXX) ──────────────────────
-  const promoMatch = messageText.match(/\bTM-[A-F0-9]{6}\b/i);
-  if (promoMatch) {
-    await handlePromoCode(promoMatch[0], senderId, pageId, pageAccessToken);
-    return;
-  }
-
-  // ── Commandes avec préfixe @ ───────────────────────────────
-  if (messageText.startsWith(PREFIX)) {
-    const parts = messageText.slice(PREFIX.length).trim().split(/\s+/);
-    const cmd = parts.shift()?.toLowerCase();
-
-    if (cmd === 'admin') {
-      await handleAdminCommand(senderId, parts, pageAccessToken);
-      return;
-    }
-
-    if (cmd === 'help') {
-      await sendMessage(senderId, {
-        text: '📋 Commandes disponibles :\n\n@help — Cette aide\n\nEnvoyez un message pour parler avec Tsanta !\nEnvoyez votre code TM-XXXXXX pour télécharger un livre.'
-      }, pageAccessToken);
-      return;
-    }
-
-    await sendMessage(senderId, { text: `❌ Commande inconnue : @${cmd}` }, pageAccessToken);
-    return;
-  }
-
-  // ── Agent IA Gemini (tsanta) ───────────────────────────────
   try {
-    // 1. Sauvegarder le message utilisateur
+    // 1️⃣ Sauvegarde message user
     await saveToHistory(senderId, pageId, 'user', messageText);
 
-    // 2. Charger la mémoire et l'historique
+    // 2️⃣ Charger mémoire + historique
     const [memory, history] = await Promise.all([
       getOrCreateMemory(senderId, pageId),
       getRecentHistory(senderId)
     ]);
 
-    // 3. Appel Gemini avec contexte enrichi
-    const aiResponse = await callGemini(
+    // 3️⃣ Appel IA
+    const aiRaw = await callGemini(
       messageText,
       history,
       memory?.summary || ''
     );
 
-    // 4. Sauvegarder la réponse
-    await saveToHistory(senderId, pageId, 'assistant', aiResponse);
+    // 4️⃣ Extraction texte propre
+    const { text: aiText } = extractAIText(aiRaw);
 
-    // 5. Envoyer la réponse
-    await sendMessage(senderId, { text: aiResponse }, pageAccessToken);
+    // 5️⃣ Sauvegarde réponse texte uniquement
+    await saveToHistory(senderId, pageId, 'assistant', aiText);
 
-    // 6. Mettre à jour la mémoire (résumé si nécessaire)
+    // 6️⃣ Envoi texte propre à Messenger
+    await sendMessage(senderId, { text: aiText }, pageAccessToken);
+
+    // 7️⃣ Mise à jour mémoire
     if (memory) {
       await updateMemoryAfterMessage(senderId, pageId, memory);
     }
+
   } catch (err) {
     console.error('❌ processMessage error:', err);
     await sendMessage(senderId, {
@@ -203,7 +165,7 @@ async function processMessage(
   }
 }
 
-// ── Handler postback ──────────────────────────────────────────
+// ── Postback ────────────────────────────────────────────────
 async function processPostback(
   event: Record<string, unknown>,
   pageAccessToken: string
@@ -212,20 +174,20 @@ async function processPostback(
   const senderId = sender?.id;
   if (!senderId) return;
 
-  const postback = event.postback as { payload: string };
-
   await sendMessage(senderId, {
-    text: '🤝 Tongasoa!\n\n🤝 Bienvenue !\n\nEnvoyez un message ou votre code TM-XXXXXX pour télécharger un livre. 😊'
+    text:
+      '🤝 Tongasoa!\n\n' +
+      '🤝 Bienvenue !\n\n' +
+      'Envoyez un message ou votre code TM-XXXXXX.'
   }, pageAccessToken);
 }
 
 // ════════════════════════════════════════════════════════════
-// EDGE FUNCTION ENTRY POINT
+// ENTRY POINT
 // ════════════════════════════════════════════════════════════
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
-  // ── Vérification webhook Facebook ────────────────────────
   if (req.method === 'GET') {
     const mode      = url.searchParams.get('hub.mode');
     const token     = url.searchParams.get('hub.verify_token');
@@ -238,19 +200,15 @@ Deno.serve(async (req: Request) => {
     return new Response('Forbidden', { status: 403 });
   }
 
-  // ── Traitement des événements Messenger ──────────────────
   if (req.method === 'POST') {
-    // Répondre immédiatement à Facebook (requis < 5s)
     const body = await req.json();
 
-    // Traitement asynchrone en arrière-plan
     EdgeRuntime.waitUntil((async () => {
       if (body.object !== 'page') return;
 
       for (const entry of body.entry || []) {
         const pageId = entry.id as string;
         const pageToken = await getPageToken(pageId);
-
         if (!pageToken) continue;
 
         for (const event of entry.messaging || []) {
