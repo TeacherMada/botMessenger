@@ -1,15 +1,67 @@
 // supabase/functions/_shared/gemini.ts
 // ============================================================
 // GEMINI ENGINE — Rotation intelligente modèles × API Keys
-// Stratégie : model1/key1 → model2/key1 → model3/key1
-//           → model1/key2 → model2/key2 → ... → throw
 // ============================================================
+
+// URL de votre instruction système hébergée sur GitHub
+const SYSTEM_INSTRUCTION_URL = 'https://raw.githubusercontent.com/TeacherMada/botMessenger/main/system-instruction.md';
+
+// Cache en mémoire pour éviter de re-télécharger à chaque appel
+let cachedSystemInstruction: string | null = null;
+let lastFetchTime = 0;
+const CACHE_DURATION = 3600000; // 1 heure (en millisecondes)
+
+// ── Charger l'instruction système depuis GitHub ─────────────
+async function loadSystemInstruction(): Promise<string> {
+  const now = Date.now();
+  
+  // Utiliser le cache si disponible et pas trop vieux
+  if (cachedSystemInstruction && (now - lastFetchTime) < CACHE_DURATION) {
+    console.log('📦 Utilisation instruction système en cache');
+    return cachedSystemInstruction;
+  }
+
+  try {
+    console.log('📥 Téléchargement instruction système depuis GitHub...');
+    
+    const response = await fetch(SYSTEM_INSTRUCTION_URL);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const content = await response.text();
+    
+    // Mettre en cache
+    cachedSystemInstruction = content;
+    lastFetchTime = now;
+    
+    console.log('✅ Instruction système chargée avec succès');
+    return content;
+    
+  } catch (error) {
+    console.error('❌ Erreur chargement instruction système:', error);
+    
+    // Fallback : instruction minimale en cas d'échec
+    return `You are "TSANTA", Senior Strategic Learning Advisor of TeacherMada.
+Guide and convert conversations into premium learning engagement.
+Be helpful, professional, and strategic.
+
+Response format (STRICT JSON ONLY):
+{
+  "reply": "your response",
+  "detected_language": "mg|fr|en",
+  "intent": "greeting|learning|pricing|signup|comparison|objection|info|book",
+  "next_action": "ask_question|present_offer|send_link|redirect_human|waiting_verification"
+}`;
+  }
+}
 
 // ── Modèles par ordre de préférence ─────────────────────────
 const GEMINI_MODELS = [
-  'gemini-3-flash-preview',      // 1er choix — le plus puissant
-  'gemini-2.5-flash-lite', // 2ème — rapide/léger
-  'gemini-2.5-flash',                    // 3ème — stable/fallback
+  'gemini-3-flash-preview',           // 1er choix — le plus récent
+  'gemini-2.5-flash',       // 2ème — rapide
+  'gemini-2.5-flash-lite',             // 3ème — stable/fallback
 ];
 
 // ── Lecture des clés API (séparées par virgule) ──────────────
@@ -72,6 +124,43 @@ async function callGeminiOnce(
   return text.trim();
 }
 
+// ── Construire le payload Gemini ──────────────────────────────
+async function buildPayload(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>,
+  memorySummary: string
+): Promise<Record<string, unknown>> {
+  // ⚠️ IMPORTANT: Charger l'instruction depuis GitHub
+  const systemInstruction = await loadSystemInstruction();
+  
+  const finalInstruction = memorySummary
+    ? `${systemInstruction}\n\n────────────────────────\nMÉMOIRE CLIENT (contexte mémorisé):\n${memorySummary}\n────────────────────────`
+    : systemInstruction;
+
+  const contents = history.map(h => ({
+    role: h.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: h.content }],
+  }));
+
+  contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
+  return {
+    systemInstruction: { parts: [{ text: finalInstruction }] },
+    contents,
+    generationConfig: {
+      temperature: 0.75,
+      maxOutputTokens: 600,
+      responseMimeType: 'application/json',
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+    ],
+  };
+}
+
 // ── Appel principal avec rotation clés × modèles ─────────────
 export async function callGemini(
   userMessage: string,
@@ -81,7 +170,7 @@ export async function callGemini(
   const apiKeys = getApiKeys();
   if (apiKeys.length === 0) throw new Error('GEMINI_API_KEY non configurée');
 
-  const payload = buildPayload(userMessage, history, memorySummary);
+  const payload = await buildPayload(userMessage, history, memorySummary);
   const errors: string[] = [];
 
   // Rotation : pour chaque clé → essayer chaque modèle dans l'ordre
@@ -132,40 +221,3 @@ export function parseGeminiResponse(raw: string): {
     };
   }
 }
-
-// ── Construire le payload Gemini ──────────────────────────────
-function buildPayload(
-  userMessage: string,
-  history: Array<{ role: string; content: string }>,
-  memorySummary: string
-): Record<string, unknown> {
-  const systemText = memorySummary
-    ? `${SYSTEM_INSTRUCTION}\n\n────────────────────────\nMÉMOIRE CLIENT (contexte mémorisé):\n${memorySummary}\n────────────────────────`
-    : SYSTEM_INSTRUCTION;
-
-  const contents = history.map(h => ({
-    role: h.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: h.content }],
-  }));
-
-  contents.push({ role: 'user', parts: [{ text: userMessage }] });
-
-  return {
-    systemInstruction: { parts: [{ text: systemText }] },
-    contents,
-    generationConfig: {
-      temperature: 0.75,
-      maxOutputTokens: 600,
-      responseMimeType: 'application/json',
-    },
-    safetySettings: [
-      { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_ONLY_HIGH' },
-      { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_ONLY_HIGH' },
-      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
-      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
-    ],
-  };
-}
-
-// Remplacez l'URL par celle que vous avez copiée
-const SYSTEM_INSTRUCTION_URL = 'https://raw.githubusercontent.com/TeacherMada/botMessenger/main/system-instruction.md';
