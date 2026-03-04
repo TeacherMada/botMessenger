@@ -183,34 +183,40 @@ export async function callGemini(
   for (const apiKey of apiKeys) {
     for (const model of GEMINI_MODELS) {
       try {
-        console.log(`🔄 Gemini: essai ${model} / key …${apiKey.slice(-6)}`);
 
         const rawText = await callGeminiOnce(apiKey, model, payload);
 
-        console.log(`✅ Gemini: succès avec ${model}`);
-
-        // 🔥 IMPORTANT : On parse ici directement
         const parsed = parseGeminiResponse(rawText);
 
-        return parsed;
+        // 🔥 Sécurisation ici
+        const safeReply =
+          parsed.reply ||
+          (parsed as any).response ||
+          (parsed as any).message ||
+          rawText ||
+          "Je n'ai pas pu générer une réponse correcte.";
+
+        return {
+          reply: safeReply,
+          detected_language: parsed.detected_language || 'fr',
+          intent: parsed.intent || 'info',
+          next_action: parsed.next_action || 'waiting_verification',
+        };
 
       } catch (err: any) {
-        const msg = `[key …${apiKey.slice(-6)}][${model}] ${err.message}`;
+        const msg = `[${model}] ${err.message}`;
         errors.push(msg);
-        console.warn(`⚠️ Gemini échec: ${msg}`);
 
-        if (err.status === 401 || err.status === 403) {
-          console.warn(`🔑 Clé invalide — passage à la clé suivante`);
-          break;
-        }
+        if (err.status === 401 || err.status === 403) break;
 
         await new Promise(r => setTimeout(r, 300));
       }
     }
   }
 
-  throw new Error(`Gemini: tous les providers ont échoué.\n${errors.join('\n')}`);
+  throw new Error(`Gemini error:\n${errors.join('\n')}`);
 }
+
 // ── Parse la réponse JSON de Gemini ──────────────────────────
 export function parseGeminiResponse(raw: string): {
   reply: string;
