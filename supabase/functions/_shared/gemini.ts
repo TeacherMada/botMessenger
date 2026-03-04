@@ -167,3 +167,5 @@ function buildPayload(
   };
 }
 
+// Remplacez l'URL par celle que vous avez copiée
+const SYSTEM_INSTRUCTION_URL = 'https://raw.githubusercontent.com/TeacherMada/botMessenger/main/system-instruction.md';
