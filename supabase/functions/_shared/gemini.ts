@@ -120,7 +120,7 @@ async function callGeminiOnce(
     if (reason === 'SAFETY') throw new Error(`[${model}] Contenu bloqué (SAFETY)`);
     throw new Error(`[${model}] Réponse vide — ${JSON.stringify(data).slice(0, 150)}`);
   }
-
+  
   return text.trim();
 }
 
